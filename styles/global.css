@@ -1,62 +1,44 @@
 @import "tailwindcss";
 
 :root {
-  --background: #fff;
-  --foreground: #000;
-  --unfocused-border-color: #eaeaea;
-  --focused-border-color: #666;
+  --background: #000000;
+  --foreground: #ededed;
 
-  --button-disabled-color: #fafafa;
-  --disabled-text-color: #999;
+  --v0-bg-100: #0a0a0a;
+  --v0-bg-200: #000000;
+  --v0-bg-300: #121212;
+  --v0-bubble: #1f1f1f;
+  --v0-text-primary: #ededed;
+  --v0-text-secondary: #a1a1a1;
+  --v0-text-tertiary: #8f8f8f;
+  --v0-text-muted: #666666;
+  --v0-border-solid: #292929;
+  --v0-border-alpha: rgba(255, 255, 255, 0.125);
+  --v0-blue: #0070f3;
+  --v0-green: #22c55e;
+  --v0-red: #ef4444;
 
   --geist-border-radius: 5px;
   --geist-quarter-pad: 6px;
   --geist-half-pad: 12px;
   --geist-pad: 24px;
   --geist-font: "Inter";
-
-  --geist-error: #e00;
-
-  --subtitle: #666;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #000000;
-    --unfocused-border-color: #333;
-    --focused-border-color: #888;
-    --foreground: #fff;
-    --button-disabled-color: #111;
-    --geist-error: red;
-    --subtitle: #8d8d8d;
-  }
 }
 
 @theme {
   --color-foreground: var(--foreground);
   --color-background: var(--background);
-  --color-unfocused-border-color: var(--unfocused-border-color);
-  --color-focused-border-color: var(--focused-border-color);
-  --color-button-disabled-color: var(--button-disabled-color);
-  --color-disabled-text-color: var(--disabled-text-color);
-  --color-geist-error: var(--geist-error);
-  --color-subtitle: var(--subtitle);
-  --padding-geist-quarter: var(--geist-quarter-pad);
-  --padding-geist-half: var(--geist-half-pad);
-  --padding-geist: var(--geist-pad);
-  --spacing-geist: var(--geist-pad);
-  --spacing-geist-half: var(--geist-half-pad);
-  --spacing-geist-quarter: var(--geist-quarter-pad);
+  --color-v0-bg-100: var(--v0-bg-100);
+  --color-v0-bg-200: var(--v0-bg-200);
+  --color-v0-bubble: var(--v0-bubble);
+  --color-v0-text-primary: var(--v0-text-primary);
+  --color-v0-text-secondary: var(--v0-text-secondary);
+  --color-v0-text-tertiary: var(--v0-text-tertiary);
+  --color-v0-text-muted: var(--v0-text-muted);
+  --color-v0-border-solid: var(--v0-border-solid);
+  --color-v0-blue: var(--v0-blue);
+  --color-v0-green: var(--v0-green);
+  --color-v0-red: var(--v0-red);
   --radius-geist: var(--geist-border-radius);
   --font-geist: var(--geist-font);
-  --animate-spinner: spinner 1.2s linear infinite;
-
-  @keyframes spinner {
-    0% {
-      opacity: 1;
-    }
-    100% {
-      opacity: 0.15;
-    }
-  }
 }
