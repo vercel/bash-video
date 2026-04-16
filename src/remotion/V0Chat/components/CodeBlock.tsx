@@ -1,4 +1,5 @@
 import React from "react";
+import { useCurrentFrame, interpolate } from "remotion";
 import {
   BG_SECONDARY,
   BORDER_SOLID,
@@ -7,8 +8,8 @@ import {
   TEXT_TERTIARY,
   GREEN,
   RED,
-  LINE_REVEAL_RATE,
 } from "../constants";
+import { BlinkingCursor } from "./BlinkingCursor";
 
 function colorDiffLine(line: string): React.ReactNode {
   if (line.startsWith("+")) {
@@ -47,16 +48,36 @@ function colorDiffLine(line: string): React.ReactNode {
 
 export const CodeBlock: React.FC<{
   lines: string[];
-  localFrame: number;
-  lineRate?: number;
-}> = ({ lines, localFrame, lineRate = LINE_REVEAL_RATE }) => {
-  const visibleCount = Math.min(
-    lines.length,
-    Math.max(0, Math.floor(localFrame / lineRate)),
-  );
-  const visibleLines = lines.slice(0, visibleCount);
+  enterFrame: number;
+  charsVisible?: number;
+  showCursor?: boolean;
+}> = ({ lines, enterFrame, charsVisible, showCursor = true }) => {
+  const frame = useCurrentFrame();
+  const localFrame = frame - enterFrame;
 
-  if (visibleCount === 0) return null;
+  if (localFrame < 0) return null;
+
+  const isStreaming = charsVisible !== undefined;
+  const fullText = lines.join("\n");
+  const visibleText = isStreaming ? fullText.slice(0, charsVisible) : fullText;
+  const visibleLines = isStreaming ? visibleText.split("\n") : lines;
+  const isDone = !isStreaming || charsVisible >= fullText.length;
+
+  // Fade + slide entrance only when not streaming
+  const opacity = isStreaming
+    ? 1
+    : interpolate(localFrame, [0, 10], [0, 1], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      });
+  const translateY = isStreaming
+    ? 0
+    : interpolate(localFrame, [0, 10], [16, 0], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      });
+
+  if (isStreaming && charsVisible <= 0) return null;
 
   return (
     <pre
@@ -72,6 +93,8 @@ export const CodeBlock: React.FC<{
         margin: 0,
         overflow: "hidden",
         whiteSpace: "pre-wrap",
+        opacity,
+        transform: `translateY(${translateY}px)`,
       }}
     >
       {visibleLines.map((line, i) => (
@@ -80,6 +103,7 @@ export const CodeBlock: React.FC<{
           {i < visibleLines.length - 1 && "\n"}
         </React.Fragment>
       ))}
+      {isStreaming && showCursor && !isDone && <BlinkingCursor height={13} />}
     </pre>
   );
 };

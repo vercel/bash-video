@@ -20,7 +20,6 @@ import { CodeBlock } from "./components/CodeBlock";
 import { WorkMetrics } from "./components/WorkMetrics";
 import { MessagingApp } from "./components/MessagingApp";
 import { GlobeIcon } from "./components/icons/GlobeIcon";
-import { WrenchIcon } from "./components/icons/WrenchIcon";
 
 import {
   BG_PRIMARY,
@@ -40,12 +39,11 @@ import {
 import {
   USER_PROMPT,
   ASSISTANT_STREAMING_TEXT,
-  BASH_COMMAND,
   BROWSER_COMMAND,
   BROWSER_OUTPUT_LINES,
-  VITEST_OUTPUT_LINES,
   REPORT_TEXT,
   FIX_CODE_LINES,
+  FIX_CODE_TEXT,
   SCENES,
 } from "./script";
 
@@ -59,19 +57,163 @@ const APPROX_HEIGHTS = {
   userBubble: 110,
   thinking: 32,
   streamingLineHeight: 24,
-  streamingCharsPerLine: 55,
+  streamingCharsPerLine: 80,
   permissionCard: 220,
   richTaskHeader: 36,
   terminalLineHeight: 22,
   terminalPadding: 32,
   codeLineHeight: 22,
   codePadding: 32,
-  reportLineHeight: 26,
-  reportCharsPerLine: 55,
   workMetrics: 55,
   successMessage: 44,
   gap: MESSAGE_GAP,
 };
+
+// ─── Report parsing ──────────────────────────────────────────────────────────
+// REPORT_TEXT is authored in lightweight markdown (## heading, **bold**, `code`,
+// fenced ``` code blocks). We parse it ONCE into structured blocks so streaming
+// never exposes raw markdown delimiters on screen — bold text streams as bold
+// from the first character.
+
+type ReportSegment = { text: string; bold?: boolean; code?: boolean };
+type ReportBlock =
+  | { kind: "heading"; segments: ReportSegment[]; charCount: number }
+  | { kind: "para"; segments: ReportSegment[]; charCount: number }
+  | { kind: "code"; lines: string[]; charCount: number }
+  | { kind: "blank"; charCount: number };
+
+function parseInline(line: string): ReportSegment[] {
+  const segments: ReportSegment[] = [];
+  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    if (m.index > lastIndex) {
+      segments.push({ text: line.slice(lastIndex, m.index) });
+    }
+    const tok = m[0];
+    if (tok.startsWith("**")) {
+      segments.push({ text: tok.slice(2, -2), bold: true });
+    } else {
+      segments.push({ text: tok.slice(1, -1), code: true });
+    }
+    lastIndex = re.lastIndex;
+  }
+  if (lastIndex < line.length) {
+    segments.push({ text: line.slice(lastIndex) });
+  }
+  return segments;
+}
+
+function parseReport(md: string): ReportBlock[] {
+  const out: ReportBlock[] = [];
+  const lines = md.split("\n");
+  let inCode = false;
+  let codeLines: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith("```")) {
+      if (!inCode) {
+        inCode = true;
+        codeLines = [];
+      } else {
+        const charCount =
+          codeLines.reduce((a, l) => a + l.length, 0) +
+          Math.max(0, codeLines.length - 1); // internal newlines
+        out.push({ kind: "code", lines: codeLines, charCount });
+        inCode = false;
+      }
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+    if (line.trim() === "") {
+      out.push({ kind: "blank", charCount: 1 });
+      continue;
+    }
+    if (line.startsWith("## ")) {
+      const segments = parseInline(line.slice(3));
+      const charCount = segments.reduce((a, s) => a + s.text.length, 0);
+      out.push({ kind: "heading", segments, charCount });
+      continue;
+    }
+    const segments = parseInline(line);
+    const charCount = segments.reduce((a, s) => a + s.text.length, 0);
+    out.push({ kind: "para", segments, charCount });
+  }
+  return out;
+}
+
+const REPORT_BLOCKS: ReportBlock[] = parseReport(REPORT_TEXT);
+const REPORT_TOTAL_CHARS = REPORT_BLOCKS.reduce((a, b) => a + b.charCount, 0);
+
+/**
+ * Count how many on-screen lines a partially-revealed piece of text occupies,
+ * so scroll can jump exactly when the text moves to a new visual line.
+ * Height stays flat while a line is being typed and advances once a newline
+ * is revealed or the current line has wrapped past `charsPerLine`.
+ */
+function countWrappedLines(text: string, charsPerLine: number): number {
+  if (text.length === 0) return 1;
+  const sourceLines = text.split("\n");
+  let total = 0;
+  for (const line of sourceLines) {
+    if (line.length === 0) {
+      total += 1;
+    } else {
+      total += Math.max(1, Math.ceil(line.length / charsPerLine));
+    }
+  }
+  return total;
+}
+
+/** Report height walk based on structured blocks + a char budget. */
+function computeReportHeight(charsVisible: number): number {
+  if (charsVisible <= 0) return 0;
+  const codeLineHeight = 21; // 13px * 1.6
+  const codePadding = 20; // 8px top + 8px bottom padding + small margin
+  const paraLineHeight = 24; // 15px * 1.6
+  const headingHeight = 22 + 12; // line height + vertical margins
+  const blankHeight = 8;
+  const paraCharsPerLine = 80;
+  const codeCharsPerLine = 70;
+
+  let remaining = charsVisible;
+  let h = 0;
+
+  for (const block of REPORT_BLOCKS) {
+    if (remaining <= 0) break;
+    const reveal = Math.min(block.charCount, remaining);
+
+    if (block.kind === "blank") {
+      h += blankHeight;
+    } else if (block.kind === "heading") {
+      h += headingHeight;
+    } else if (block.kind === "para") {
+      const lineChars = Math.max(1, reveal);
+      h += Math.max(1, Math.ceil(lineChars / paraCharsPerLine)) * paraLineHeight;
+    } else if (block.kind === "code") {
+      // Count visible code lines given the reveal budget.
+      let taken = 0;
+      let visibleLines = 0;
+      for (let i = 0; i < block.lines.length; i++) {
+        const line = block.lines[i];
+        const lineCost = line.length + (i < block.lines.length - 1 ? 1 : 0);
+        if (taken >= reveal) break;
+        const lineReveal = Math.min(line.length, reveal - taken);
+        visibleLines += Math.max(1, Math.ceil(Math.max(1, lineReveal) / codeCharsPerLine));
+        taken += lineCost;
+      }
+      if (visibleLines > 0) {
+        h += visibleLines * codeLineHeight + codePadding;
+      }
+    }
+    remaining -= block.charCount;
+  }
+  return h;
+}
 
 /**
  * Content-aware scroll: calculate total content height at current frame,
@@ -90,16 +232,16 @@ function getContentHeight(frame: number): number {
     h += APPROX_HEIGHTS.thinking + APPROX_HEIGHTS.gap;
   }
 
-  // Streaming text - grows as characters appear
+  // Streaming text - height jumps when a new visual line begins
   if (frame >= SCENES.streaming.start) {
     const chars = getCharsVisible(
       frame - SCENES.streaming.start,
       ASSISTANT_STREAMING_TEXT.length,
       CHAR_REVEAL_RATE,
     );
-    const lines = Math.max(
-      1,
-      Math.ceil(chars / APPROX_HEIGHTS.streamingCharsPerLine),
+    const lines = countWrappedLines(
+      ASSISTANT_STREAMING_TEXT.slice(0, chars),
+      APPROX_HEIGHTS.streamingCharsPerLine,
     );
     h += lines * APPROX_HEIGHTS.streamingLineHeight + APPROX_HEIGHTS.gap;
   }
@@ -110,21 +252,6 @@ function getContentHeight(frame: number): number {
   }
 
   // Agent browser task
-  // Running tests task (first, right after Allow)
-  if (frame >= SCENES.runningTests.start) {
-    const localFrame = frame - SCENES.runningTests.start - 10;
-    const visibleLines = Math.min(
-      VITEST_OUTPUT_LINES.length,
-      Math.max(0, Math.floor(localFrame / 5)),
-    );
-    h +=
-      APPROX_HEIGHTS.richTaskHeader +
-      visibleLines * APPROX_HEIGHTS.terminalLineHeight +
-      APPROX_HEIGHTS.terminalPadding +
-      APPROX_HEIGHTS.gap;
-  }
-
-  // Agent browser task (after tests)
   if (frame >= SCENES.agentBrowser.start) {
     const localFrame = frame - SCENES.agentBrowser.start - 10;
     const visibleLines = Math.min(
@@ -138,34 +265,34 @@ function getContentHeight(frame: number): number {
       APPROX_HEIGHTS.gap;
   }
 
-  // Report - grows as characters appear
+  // Report - height jumps block-by-block / line-by-line as text reveals
   if (frame >= SCENES.report.start) {
     const chars = getCharsVisible(
       frame - SCENES.report.start,
-      REPORT_TEXT.length,
+      REPORT_TOTAL_CHARS,
       CHAR_REVEAL_RATE,
     );
-    const lines = Math.max(
-      1,
-      Math.ceil(chars / APPROX_HEIGHTS.reportCharsPerLine),
-    );
-    h += lines * APPROX_HEIGHTS.reportLineHeight + APPROX_HEIGHTS.gap;
+    h += computeReportHeight(chars) + APPROX_HEIGHTS.gap;
   }
 
-  // Autofix code
+  // Autofix code (streams char-by-char)
   if (frame >= SCENES.autofix.start) {
-    const localFrame = frame - SCENES.autofix.start;
-    const visibleLines = Math.min(
-      FIX_CODE_LINES.length,
-      Math.max(0, Math.floor(localFrame / 4)),
+    const chars = getCharsVisible(
+      frame - SCENES.autofix.start,
+      FIX_CODE_TEXT.length,
+      CHAR_REVEAL_RATE,
+    );
+    const lineCount = Math.max(
+      1,
+      chars > 0 ? FIX_CODE_TEXT.slice(0, chars).split("\n").length : 1,
     );
     h +=
-      visibleLines * APPROX_HEIGHTS.codeLineHeight +
+      lineCount * APPROX_HEIGHTS.codeLineHeight +
       APPROX_HEIGHTS.codePadding +
       APPROX_HEIGHTS.gap;
 
-    // Success message
-    if (frame >= SCENES.autofix.start + FIX_CODE_LINES.length * 4 + 10) {
+    // Success message (show after streaming completes)
+    if (chars >= FIX_CODE_TEXT.length) {
       h += APPROX_HEIGHTS.successMessage + APPROX_HEIGHTS.gap;
     }
   }
@@ -175,7 +302,7 @@ function getContentHeight(frame: number): number {
     h += APPROX_HEIGHTS.workMetrics;
   }
 
-  h -= 80; // bottom spacer
+  h -= 60; // bottom spacer
 
   return h;
 }
@@ -266,24 +393,27 @@ export const V0ChatComposition: React.FC = () => {
   const agentBrowserActive =
     frame >= SCENES.agentBrowser.start && frame < SCENES.agentBrowser.end;
 
-  // — Running tests —
-  const showRunningTests = frame >= SCENES.runningTests.start;
-  const runningTestsActive =
-    frame >= SCENES.runningTests.start && frame < SCENES.runningTests.end;
-
   // — Report —
   const showReport = frame >= SCENES.report.start;
   const reportChars = showReport
     ? getCharsVisible(
         frame - SCENES.report.start,
-        REPORT_TEXT.length,
+        REPORT_TOTAL_CHARS,
         CHAR_REVEAL_RATE,
       )
     : 0;
-  const reportDone = reportChars >= REPORT_TEXT.length;
+  const reportDone = reportChars >= REPORT_TOTAL_CHARS;
 
   // — Autofix —
   const showAutofix = frame >= SCENES.autofix.start;
+  const autofixChars = showAutofix
+    ? getCharsVisible(
+        frame - SCENES.autofix.start,
+        FIX_CODE_TEXT.length,
+        CHAR_REVEAL_RATE,
+      )
+    : 0;
+  const autofixDone = autofixChars >= FIX_CODE_TEXT.length;
 
   // — Work metrics —
   const showWorkMetrics = frame >= SCENES.workMetrics.start;
@@ -395,29 +525,10 @@ export const V0ChatComposition: React.FC = () => {
                 {showPermissionCard && (
                   <AssistantMessage>
                     <BashPermissionCard
-                      command={BASH_COMMAND}
+                      command={BROWSER_COMMAND}
                       enterFrame={SCENES.permissionCard.start}
                       allowClickFrame={SCENES.permissionCard.allowClick}
                     />
-                  </AssistantMessage>
-                )}
-
-                {/* === Running tests task (right after Allow click) === */}
-                {showRunningTests && (
-                  <AssistantMessage>
-                    <RichTaskBlock
-                      icon={<WrenchIcon size={13} />}
-                      activeTitle="Running some commands"
-                      completeTitle="Ran some commands"
-                      isActive={runningTestsActive}
-                      enterFrame={SCENES.runningTests.start}
-                      duration="5s"
-                    >
-                      <TerminalOutput
-                        lines={VITEST_OUTPUT_LINES}
-                        localFrame={frame - SCENES.runningTests.start - 10}
-                      />
-                    </RichTaskBlock>
                   </AssistantMessage>
                 )}
 
@@ -459,12 +570,12 @@ export const V0ChatComposition: React.FC = () => {
                   <AssistantMessage>
                     <CodeBlock
                       lines={FIX_CODE_LINES}
-                      localFrame={frame - SCENES.autofix.start}
-                      lineRate={4}
+                      enterFrame={SCENES.autofix.start}
+                      charsVisible={autofixChars}
+                      showCursor={!autofixDone}
                     />
-                    {/* Success message after code appears */}
-                    {frame >=
-                      SCENES.autofix.start + FIX_CODE_LINES.length * 4 + 10 && (
+                    {/* Success message after streaming completes */}
+                    {autofixDone && (
                       <div
                         style={{
                           display: "flex",
@@ -496,7 +607,7 @@ export const V0ChatComposition: React.FC = () => {
                             lineHeight: 1.6,
                           }}
                         >
-                          Fix applied. Re-running tests... all 9 tests pass now.
+                          Fix applied. Re-running tests... all 8 tests pass now.
                         </span>
                       </div>
                     )}
@@ -546,46 +657,70 @@ export const V0ChatComposition: React.FC = () => {
 };
 
 /** Report content with basic markdown-like rendering */
+/** Render inline segments, limited to `maxChars` of combined text. */
+function renderSegments(
+  segments: ReportSegment[],
+  maxChars: number,
+): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  let used = 0;
+  segments.forEach((seg, i) => {
+    if (used >= maxChars) return;
+    const take = Math.min(seg.text.length, maxChars - used);
+    const text = seg.text.slice(0, take);
+    used += take;
+    if (seg.bold) {
+      nodes.push(
+        <strong key={i} style={{ color: TEXT_PRIMARY }}>
+          {text}
+        </strong>,
+      );
+    } else if (seg.code) {
+      nodes.push(
+        <code
+          key={i}
+          style={{
+            fontFamily: FONT_MONO,
+            fontSize: 13,
+            backgroundColor: "#1a1a1a",
+            border: `1px solid ${BORDER_SOLID}`,
+            borderRadius: 6,
+            padding: "2px 6px",
+            color: TEXT_PRIMARY,
+          }}
+        >
+          {text}
+        </code>,
+      );
+    } else {
+      nodes.push(<span key={i}>{text}</span>);
+    }
+  });
+  return nodes;
+}
+
 const ReportContent: React.FC<{
   charsVisible: number;
   showCursor: boolean;
 }> = ({ charsVisible, showCursor }) => {
-  const visibleText = REPORT_TEXT.slice(0, charsVisible);
-  const lines = visibleText.split("\n");
-
-  // Parse lines into blocks: detect fenced code blocks
-  const blocks: Array<
-    | { type: "line"; text: string; idx: number }
-    | { type: "codeblock"; lines: string[]; startIdx: number }
-  > = [];
-  let inCode = false;
-  let codeLines: string[] = [];
-  let codeStart = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].startsWith("```")) {
-      if (!inCode) {
-        inCode = true;
-        codeLines = [];
-        codeStart = i;
-      } else {
-        blocks.push({
-          type: "codeblock",
-          lines: codeLines,
-          startIdx: codeStart,
-        });
-        inCode = false;
-      }
-      continue;
-    }
-    if (inCode) {
-      codeLines.push(lines[i]);
-    } else {
-      blocks.push({ type: "line", text: lines[i], idx: i });
-    }
+  // Walk blocks in order, consuming from the char budget.
+  let remaining = charsVisible;
+  const rendered: Array<{ block: ReportBlock; reveal: number; index: number }> = [];
+  for (let i = 0; i < REPORT_BLOCKS.length; i++) {
+    if (remaining <= 0) break;
+    const block = REPORT_BLOCKS[i];
+    const reveal = Math.min(block.charCount, remaining);
+    rendered.push({ block, reveal, index: i });
+    remaining -= block.charCount;
   }
-  if (inCode && codeLines.length > 0) {
-    blocks.push({ type: "codeblock", lines: codeLines, startIdx: codeStart });
+
+  // Cursor belongs on the last non-blank block that's still being revealed.
+  let cursorIndex = -1;
+  for (let i = rendered.length - 1; i >= 0; i--) {
+    if (rendered[i].block.kind !== "blank") {
+      cursorIndex = i;
+      break;
+    }
   }
 
   return (
@@ -600,47 +735,17 @@ const ReportContent: React.FC<{
         gap: 4,
       }}
     >
-      {blocks.map((block, bi) => {
-        const isLastBlock = bi === blocks.length - 1;
+      {rendered.map(({ block, reveal, index }, ri) => {
+        const isCursorHere = ri === cursorIndex && showCursor;
 
-        if (block.type === "codeblock") {
-          if (block.lines.length === 0) return null;
-          // Filter out empty trailing lines to avoid the flash of an empty box
-          const nonEmptyLines = block.lines.filter(
-            (l, i) => i < block.lines.length - 1 || l.trim() !== "",
-          );
-          if (nonEmptyLines.length === 0 && !block.lines.some((l) => l.trim()))
-            return null;
-          return (
-            <pre
-              key={`cb-${block.startIdx}`}
-              style={{
-                fontFamily: FONT_MONO,
-                fontSize: 13,
-                lineHeight: 1.6,
-                color: TEXT_SECONDARY,
-                backgroundColor: BG_SECONDARY,
-                border: `1px solid ${BORDER_SOLID}`,
-                borderRadius: 8,
-                padding: "8px 12px",
-                margin: "4px 0",
-                whiteSpace: "pre-wrap",
-                overflow: "hidden",
-              }}
-            >
-              {block.lines.join("\n")}
-              {isLastBlock && showCursor && <CursorInline />}
-            </pre>
-          );
+        if (block.kind === "blank") {
+          return <div key={`b-${index}`} style={{ height: 8 }} />;
         }
 
-        const { text: line, idx: i } = block;
-        const isLast = isLastBlock;
-
-        if (line.startsWith("## ")) {
+        if (block.kind === "heading") {
           return (
             <h2
-              key={i}
+              key={`h-${index}`}
               style={{
                 fontFamily: FONT_SANS,
                 fontSize: 16,
@@ -650,64 +755,53 @@ const ReportContent: React.FC<{
                 lineHeight: 1.4,
               }}
             >
-              {line.replace("## ", "")}
-              {isLast && showCursor && <CursorInline />}
+              {renderSegments(block.segments, reveal)}
+              {isCursorHere && <CursorInline />}
             </h2>
           );
         }
 
-        if (line.startsWith("**") && line.includes("**:")) {
-          const match = line.match(/^\*\*(.+?)\*\*:?\s*(.*)/);
-          if (match) {
-            return (
-              <p key={i} style={{ margin: 0 }}>
-                <strong style={{ color: TEXT_PRIMARY }}>{match[1]}</strong>
-                {match[2] ? `: ${match[2]}` : ""}
-                {isLast && showCursor && <CursorInline />}
-              </p>
-            );
-          }
-        }
-
-        if (line.includes("`")) {
-          const parts = line.split(/(`[^`]+`)/);
+        if (block.kind === "para") {
           return (
-            <p key={i} style={{ margin: 0 }}>
-              {parts.map((part, j) => {
-                if (part.startsWith("`") && part.endsWith("`")) {
-                  return (
-                    <code
-                      key={j}
-                      style={{
-                        fontFamily: FONT_MONO,
-                        fontSize: 13,
-                        backgroundColor: "#1a1a1a",
-                        border: `1px solid ${BORDER_SOLID}`,
-                        borderRadius: 6,
-                        padding: "2px 6px",
-                        color: TEXT_PRIMARY,
-                      }}
-                    >
-                      {part.slice(1, -1)}
-                    </code>
-                  );
-                }
-                return <span key={j}>{part}</span>;
-              })}
-              {isLast && showCursor && <CursorInline />}
+            <p key={`p-${index}`} style={{ margin: 0 }}>
+              {renderSegments(block.segments, reveal)}
+              {isCursorHere && <CursorInline />}
             </p>
           );
         }
 
-        if (line.trim() === "") {
-          return <div key={i} style={{ height: 8 }} />;
+        // code block — reveal lines based on char budget
+        let taken = 0;
+        const visibleCodeLines: string[] = [];
+        for (let li = 0; li < block.lines.length; li++) {
+          const line = block.lines[li];
+          if (taken >= reveal) break;
+          const lineReveal = Math.min(line.length, reveal - taken);
+          visibleCodeLines.push(line.slice(0, lineReveal));
+          taken += line.length;
+          if (li < block.lines.length - 1) taken += 1; // newline
         }
-
+        if (visibleCodeLines.length === 0) return null;
         return (
-          <p key={i} style={{ margin: 0, color: TEXT_PRIMARY }}>
-            {line}
-            {isLast && showCursor && <CursorInline />}
-          </p>
+          <pre
+            key={`cb-${index}`}
+            style={{
+              fontFamily: FONT_MONO,
+              fontSize: 13,
+              lineHeight: 1.6,
+              color: TEXT_SECONDARY,
+              backgroundColor: BG_SECONDARY,
+              border: `1px solid ${BORDER_SOLID}`,
+              borderRadius: 8,
+              padding: "8px 12px",
+              margin: "4px 0",
+              whiteSpace: "pre-wrap",
+              overflow: "hidden",
+            }}
+          >
+            {visibleCodeLines.join("\n")}
+            {isCursorHere && <CursorInline />}
+          </pre>
         );
       })}
     </div>

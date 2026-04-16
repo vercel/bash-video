@@ -31,7 +31,7 @@ export const FONT_MONO =
   "'SF Mono', 'Monaco', 'Inconsolata', 'Fira Mono', 'Droid Sans Mono', 'Source Code Pro', ui-monospace, monospace";
 
 // Animation timing (frames at 30fps)
-export const CHAR_REVEAL_RATE = 0.5; // frames per character (2x speed)
+export const CHAR_REVEAL_RATE = 0.5 / 1.2; // frames per character (2.4x speed)
 export const CURSOR_BLINK_FRAMES = 24; // 0.8s cycle
 export const SHIMMER_CYCLE_FRAMES = 45; // 1.5s cycle
 export const LINE_REVEAL_RATE = 5; // frames per terminal line
