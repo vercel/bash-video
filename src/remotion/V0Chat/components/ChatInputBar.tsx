@@ -1,6 +1,7 @@
 import React from "react";
 import { useCurrentFrame, interpolate } from "remotion";
 import {
+  BG_SECONDARY,
   TEXT_PRIMARY,
   TEXT_SECONDARY,
   TEXT_MUTED,
@@ -91,7 +92,7 @@ export const ChatInputBar: React.FC<{
   return (
     <div
       style={{
-        backgroundColor: "#0a0a0a",
+        backgroundColor: BG_SECONDARY,
         width: "100%",
       }}
     >

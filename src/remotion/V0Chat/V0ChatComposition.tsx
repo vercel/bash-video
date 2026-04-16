@@ -49,8 +49,14 @@ import {
 
 const { fontFamily } = loadFont();
 
-// Height of the visible message area (total height minus prompt form ~110px)
-const MESSAGE_AREA_HEIGHT = 720 - 110;
+// During the chat streaming section the prompt form is hidden, so the chat
+// area uses the full video height for scroll math.
+const MESSAGE_AREA_HEIGHT = 720;
+const PROMPT_BAR_HEIGHT = 110;
+// Everything inside the chat is scaled up so the content feels denser and the
+// side gutters shrink. Fewer messages fit at once, so the scroll has to push
+// content off-screen faster.
+const CHAT_CONTENT_SCALE = 1.2;
 
 // Approximate height of each element type for scroll calculation
 const APPROX_HEIGHTS = {
@@ -309,7 +315,9 @@ function getContentHeight(frame: number): number {
 
 function getScrollY(frame: number): number {
   const contentH = getContentHeight(frame);
-  const overflow = contentH - MESSAGE_AREA_HEIGHT;
+  // Content is rendered with `scale(CHAT_CONTENT_SCALE)`, so its visual height
+  // is contentH * scale. We scroll once that exceeds the viewport.
+  const overflow = contentH * CHAT_CONTENT_SCALE - MESSAGE_AREA_HEIGHT;
   return Math.max(0, overflow);
 }
 
@@ -420,23 +428,15 @@ export const V0ChatComposition: React.FC = () => {
 
   const inputPlaceholder = "Ask v0 a question...";
 
-  // Height of the prompt form area (fixed at bottom)
-  const PROMPT_BAR_HEIGHT = 110;
+  // Prompt form is only visible during the intro + typing + swipe. Once the
+  // chat streaming section begins, we hide it and let the chat fill the full
+  // frame.
+  const messagingVisible = frame < SCENES.swipeTransition.end;
 
   return (
     <AbsoluteFill style={{ backgroundColor: BG_SECONDARY, overflow: "hidden" }}>
-      {/* === Background layers (swipe behind the prompt form) === */}
-      <div
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: PROMPT_BAR_HEIGHT,
-          overflow: "hidden",
-        }}
-      >
-        {/* Messaging app layer — slides left */}
+      {/* === Chat panel layer — full frame, slides in from right === */}
+      {showChat && (
         <div
           style={{
             position: "absolute",
@@ -444,44 +444,27 @@ export const V0ChatComposition: React.FC = () => {
             left: 0,
             width: "100%",
             height: "100%",
-            transform: `translateX(${appTranslateX}%)`,
-            zIndex: swipeProgress >= 1 ? 0 : 2,
-            opacity: swipeProgress >= 1 ? 0 : 1,
+            transform: `translateX(${chatTranslateX}%)`,
+            zIndex: 1,
+            backgroundColor: BG_PRIMARY,
           }}
         >
-          <MessagingApp />
-        </div>
-
-        {/* Chat panel layer — slides in from right */}
-        {showChat && (
           <div
             style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
+              position: "relative",
               width: "100%",
               height: "100%",
-              transform: `translateX(${chatTranslateX}%)`,
-              zIndex: 1,
-              backgroundColor: BG_PRIMARY,
+              overflow: "hidden",
             }}
           >
-            {/* Messages area — fills the space above the prompt form */}
-            <div
-              style={{
-                position: "relative",
-                width: "100%",
-                height: "100%",
-                overflow: "hidden",
-              }}
-            >
               <div
                 style={{
                   position: "absolute",
                   top: 0,
                   left: 0,
                   right: 0,
-                  transform: `translateY(-${scrollY}px)`,
+                  transform: `translateY(-${scrollY}px) scale(${CHAT_CONTENT_SCALE})`,
+                  transformOrigin: "top center",
                   padding: `${CHAT_PADDING}px`,
                   maxWidth: CHAT_MAX_WIDTH,
                   marginLeft: "auto",
@@ -632,26 +615,53 @@ export const V0ChatComposition: React.FC = () => {
               </div>
             </div>
           </div>
-        )}
-      </div>
+      )}
 
-      {/* === Prompt form — fixed foreground, never moves === */}
-      <div
-        style={{
-          position: "absolute",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          zIndex: 10,
-        }}
-      >
-        <ChatInputBar
-          typedText={inputTypedText}
-          showCursor={isTypingPhase}
-          placeholder={inputPlaceholder}
-          sendClickFrame={SCENES.sendClick.start}
-        />
-      </div>
+      {/* === Messaging view (app + prompt form) — slides left as a unit === */}
+      {messagingVisible && (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            transform: `translateX(${appTranslateX}%)`,
+            zIndex: swipeProgress >= 1 ? 0 : 2,
+            opacity: swipeProgress >= 1 ? 0 : 1,
+          }}
+        >
+          {/* Messaging app fills the area above the prompt form */}
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: PROMPT_BAR_HEIGHT,
+              overflow: "hidden",
+            }}
+          >
+            <MessagingApp />
+          </div>
+          {/* Prompt form pinned to the bottom of the messaging view */}
+          <div
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+            }}
+          >
+            <ChatInputBar
+              typedText={inputTypedText}
+              showCursor={isTypingPhase}
+              placeholder={inputPlaceholder}
+              sendClickFrame={SCENES.sendClick.start}
+            />
+          </div>
+        </div>
+      )}
     </AbsoluteFill>
   );
 };
