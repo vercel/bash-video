@@ -3,12 +3,9 @@ import {
   AbsoluteFill,
   useCurrentFrame,
   interpolate,
-  spring,
-  useVideoConfig,
 } from "remotion";
 import { loadFont } from "@remotion/google-fonts/Inter";
 
-import { ChatInputBar } from "./components/ChatInputBar";
 import { UserMessageBubble } from "./components/UserMessageBubble";
 import { AssistantMessage } from "./components/AssistantMessage";
 import { ThinkingIndicator } from "./components/ThinkingIndicator";
@@ -18,7 +15,6 @@ import { RichTaskBlock } from "./components/RichTaskBlock";
 import { TerminalOutput } from "./components/TerminalOutput";
 import { CodeBlock } from "./components/CodeBlock";
 import { WorkMetrics } from "./components/WorkMetrics";
-import { MessagingApp } from "./components/MessagingApp";
 import { GlobeIcon } from "./components/icons/GlobeIcon";
 
 import {
@@ -52,7 +48,6 @@ const { fontFamily } = loadFont();
 // During the chat streaming section the prompt form is hidden, so the chat
 // area uses the full video height for scroll math.
 const MESSAGE_AREA_HEIGHT = 720;
-const PROMPT_BAR_HEIGHT = 110;
 // Everything inside the chat is scaled up so the content feels denser and the
 // side gutters shrink. Fewer messages fit at once, so the scroll has to push
 // content off-screen faster.
@@ -323,56 +318,9 @@ function getScrollY(frame: number): number {
 
 export const V0ChatComposition: React.FC = () => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-
-  // === Intro swipe animation ===
-  const swipeStarted = frame >= SCENES.swipeTransition.start;
-  const swipeProgress = swipeStarted
-    ? spring({
-        frame: frame - SCENES.swipeTransition.start,
-        fps,
-        config: {
-          damping: 14,
-          stiffness: 80,
-          mass: 0.8,
-        },
-      })
-    : 0;
-  // Messaging app slides from 0 to -100% of width
-  const appTranslateX = interpolate(swipeProgress, [0, 1], [0, -110], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  // Chat panel slides from 100% to 0
-  const chatTranslateX = interpolate(swipeProgress, [0, 1], [100, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  const showChat = frame >= SCENES.swipeTransition.start;
 
   // — Scroll —
   const scrollY = useMemo(() => getScrollY(frame), [frame]);
-
-  // — Input bar state —
-  const isTypingPhase =
-    frame >= SCENES.userTyping.start && frame < SCENES.userTyping.end;
-  // Text stays visible after typing until the send click
-  const showTypedText =
-    frame >= SCENES.userTyping.start && frame < SCENES.sendClick.start + 5;
-  const typingProgress = isTypingPhase
-    ? Math.min(
-        USER_PROMPT.length,
-        Math.floor(
-          ((frame - SCENES.userTyping.start) /
-            (SCENES.userTyping.end - SCENES.userTyping.start)) *
-            USER_PROMPT.length,
-        ),
-      )
-    : USER_PROMPT.length;
-  const inputTypedText = showTypedText
-    ? USER_PROMPT.slice(0, typingProgress)
-    : "";
 
   // — Thinking phase —
   const thinkingPhase: "hidden" | "thinking" | "done" =
@@ -426,38 +374,29 @@ export const V0ChatComposition: React.FC = () => {
   // — Work metrics —
   const showWorkMetrics = frame >= SCENES.workMetrics.start;
 
-  const inputPlaceholder = "Ask v0 a question...";
-
-  // Prompt form is only visible during the intro + typing + swipe. Once the
-  // chat streaming section begins, we hide it and let the chat fill the full
-  // frame.
-  const messagingVisible = frame < SCENES.swipeTransition.end;
-
   return (
     <AbsoluteFill style={{ backgroundColor: BG_SECONDARY, overflow: "hidden" }}>
-      {/* === Chat panel layer — full frame, slides in from right === */}
-      {showChat && (
+      {/* === Chat panel — full frame === */}
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          zIndex: 1,
+          backgroundColor: BG_PRIMARY,
+        }}
+      >
         <div
           style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
+            position: "relative",
             width: "100%",
             height: "100%",
-            transform: `translateX(${chatTranslateX}%)`,
-            zIndex: 1,
-            backgroundColor: BG_PRIMARY,
+            overflow: "hidden",
           }}
         >
-          <div
-            style={{
-              position: "relative",
-              width: "100%",
-              height: "100%",
-              overflow: "hidden",
-            }}
-          >
-              <div
+            <div
                 style={{
                   position: "absolute",
                   top: 0,
@@ -615,53 +554,6 @@ export const V0ChatComposition: React.FC = () => {
               </div>
             </div>
           </div>
-      )}
-
-      {/* === Messaging view (app + prompt form) — slides left as a unit === */}
-      {messagingVisible && (
-        <div
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: "100%",
-            height: "100%",
-            transform: `translateX(${appTranslateX}%)`,
-            zIndex: swipeProgress >= 1 ? 0 : 2,
-            opacity: swipeProgress >= 1 ? 0 : 1,
-          }}
-        >
-          {/* Messaging app fills the area above the prompt form */}
-          <div
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: PROMPT_BAR_HEIGHT,
-              overflow: "hidden",
-            }}
-          >
-            <MessagingApp />
-          </div>
-          {/* Prompt form pinned to the bottom of the messaging view */}
-          <div
-            style={{
-              position: "absolute",
-              bottom: 0,
-              left: 0,
-              right: 0,
-            }}
-          >
-            <ChatInputBar
-              typedText={inputTypedText}
-              showCursor={isTypingPhase}
-              placeholder={inputPlaceholder}
-              sendClickFrame={SCENES.sendClick.start}
-            />
-          </div>
-        </div>
-      )}
     </AbsoluteFill>
   );
 };

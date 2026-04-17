@@ -73,20 +73,15 @@ export const PRIOR_SUMMARY_DETAIL = `User types → MessageInput → ChatContain
 export const PRIOR_DETAIL_TEXT = `The app uses SWR's \`mutate()\` to trigger a refetch of both the messages list and conversations list (to update the "last message" preview in the sidebar) after a successful save.`;
 
 // Frame timing for each scene
-// Typing starts at frame 30 while messaging app is still visible.
-// Swipe triggers when typing ends (user "sends" the message).
+// Chat-only variant: starts directly at messageSent. Intro/messaging scenes removed.
 export const SCENES = {
-  appIntro: { start: 0, end: 155 },       // messaging app visible throughout typing
-  userTyping: { start: 30, end: 140 },    // typing over the messaging app (1.5x faster)
-  sendClick: { start: 170, end: 180 },    // mouse clicks send button (1s pause after typing)
-  swipeTransition: { start: 180, end: 210 }, // swipe on send
-  messageSent: { start: 220, end: 245 },  // bubble appears in chat
-  thinking: { start: 245, end: 305 },     // brain shimmer → done
-  streaming: { start: 305, end: 380 },    // char-by-char response
-  permissionCard: { start: 385, end: 480, allowClick: 435 },
-  agentBrowser: { start: 480, end: 660 },
-  report: { start: 660, end: 865 },
-  autofix: { start: 870, end: 1070 },
-  workMetrics: { start: 1070, end: 1120 },
-  endHold: { start: 1120, end: 1150 },
+  messageSent: { start: 0, end: 25 },
+  thinking: { start: 25, end: 85 },
+  streaming: { start: 85, end: 160 },
+  permissionCard: { start: 165, end: 260, allowClick: 215 },
+  agentBrowser: { start: 260, end: 440 },
+  report: { start: 440, end: 645 },
+  autofix: { start: 650, end: 850 },
+  workMetrics: { start: 850, end: 900 },
+  endHold: { start: 900, end: 930 },
 } as const;
