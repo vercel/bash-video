@@ -8,7 +8,6 @@ import {
 } from "remotion";
 import { loadFont } from "@remotion/google-fonts/Inter";
 
-import { ChatInputBar } from "./components/ChatInputBar";
 import { UserMessageBubble } from "./components/UserMessageBubble";
 import { AssistantMessage } from "./components/AssistantMessage";
 import { ThinkingIndicator } from "./components/ThinkingIndicator";
@@ -18,8 +17,9 @@ import { RichTaskBlock } from "./components/RichTaskBlock";
 import { TerminalOutput } from "./components/TerminalOutput";
 import { CodeBlock } from "./components/CodeBlock";
 import { WorkMetrics } from "./components/WorkMetrics";
-import { MessagingApp } from "./components/MessagingApp";
+import { V0ChatPage, FOLLOWUP_INPUT_CENTER } from "./components/V0ChatPage";
 import { GlobeIcon } from "./components/icons/GlobeIcon";
+import { VIDEO_WIDTH, VIDEO_HEIGHT } from "../../../types/constants";
 
 import {
   BG_PRIMARY,
@@ -52,11 +52,13 @@ const { fontFamily } = loadFont();
 // During the chat streaming section the prompt form is hidden, so the chat
 // area uses the full video height for scroll math.
 const MESSAGE_AREA_HEIGHT = 720;
-const PROMPT_BAR_HEIGHT = 110;
 // Everything inside the chat is scaled up so the content feels denser and the
 // side gutters shrink. Fewer messages fit at once, so the scroll has to push
 // content off-screen faster.
 const CHAT_CONTENT_SCALE = 1.2;
+
+// Camera zoom target for the follow-up input during the intro.
+const INTRO_ZOOM_SCALE = 2.4;
 
 // Approximate height of each element type for scroll calculation
 const APPROX_HEIGHTS = {
@@ -325,31 +327,49 @@ export const V0ChatComposition: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // === Intro swipe animation ===
-  const swipeStarted = frame >= SCENES.swipeTransition.start;
-  const swipeProgress = swipeStarted
-    ? spring({
-        frame: frame - SCENES.swipeTransition.start,
-        fps,
-        config: {
-          damping: 14,
-          stiffness: 80,
-          mass: 0.8,
-        },
-      })
-    : 0;
-  // Messaging app slides from 0 to -100% of width
-  const appTranslateX = interpolate(swipeProgress, [0, 1], [0, -110], {
+  // === Intro zoom animation ===
+  // Spring-eased zoom from full-page view into the follow-up input.
+  // Using transform-origin at the input point means the input stays pinned
+  // while everything else scales out from it. We then translate the whole
+  // page so the input also moves to the video center.
+  const zoomSpring = spring({
+    frame: frame - SCENES.zoomIn.start,
+    fps,
+    config: { damping: 18, stiffness: 90, mass: 0.9 },
+  });
+  const zoomProgress = frame < SCENES.zoomIn.start ? 0 : zoomSpring;
+
+  // === Send swipe animation ===
+  const swipeProgress =
+    frame < SCENES.swipeTransition.start
+      ? 0
+      : spring({
+          frame: frame - SCENES.swipeTransition.start,
+          fps,
+          config: { damping: 14, stiffness: 80, mass: 0.8 },
+        });
+  // During swipe we first release the zoom quickly (in the first ~40% of the
+  // swipe), then let the full-size page slide off to the left. This avoids a
+  // jarring "partial slice" mid-swipe.
+  const zoomRelease = Math.min(1, swipeProgress * 2.5);
+  const effectiveZoom = zoomProgress * (1 - zoomRelease);
+  const scale = interpolate(effectiveZoom, [0, 1], [1, INTRO_ZOOM_SCALE]);
+  const zoomTx =
+    (VIDEO_WIDTH / 2 - FOLLOWUP_INPUT_CENTER.x) * effectiveZoom;
+  const zoomTy =
+    (VIDEO_HEIGHT / 2 - FOLLOWUP_INPUT_CENTER.y) * effectiveZoom;
+  const pageSwipeX = interpolate(swipeProgress, [0, 1], [0, -VIDEO_WIDTH], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  // Chat panel slides from 100% to 0
+  // Chat panel slides in from the right
   const chatTranslateX = interpolate(swipeProgress, [0, 1], [100, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
   const showChat = frame >= SCENES.swipeTransition.start;
+  const showPage = frame < SCENES.swipeTransition.end;
 
   // — Scroll —
   const scrollY = useMemo(() => getScrollY(frame), [frame]);
@@ -357,9 +377,9 @@ export const V0ChatComposition: React.FC = () => {
   // — Input bar state —
   const isTypingPhase =
     frame >= SCENES.userTyping.start && frame < SCENES.userTyping.end;
-  // Text stays visible after typing until the send click
+  // Text stays visible from typing all the way through the swipe-out
   const showTypedText =
-    frame >= SCENES.userTyping.start && frame < SCENES.sendClick.start + 5;
+    frame >= SCENES.userTyping.start && frame < SCENES.swipeTransition.end;
   const typingProgress = isTypingPhase
     ? Math.min(
         USER_PROMPT.length,
@@ -425,13 +445,6 @@ export const V0ChatComposition: React.FC = () => {
 
   // — Work metrics —
   const showWorkMetrics = frame >= SCENES.workMetrics.start;
-
-  const inputPlaceholder = "Ask v0 a question...";
-
-  // Prompt form is only visible during the intro + typing + swipe. Once the
-  // chat streaming section begins, we hide it and let the chat fill the full
-  // frame.
-  const messagingVisible = frame < SCENES.swipeTransition.end;
 
   return (
     <AbsoluteFill style={{ backgroundColor: BG_SECONDARY, overflow: "hidden" }}>
@@ -617,47 +630,34 @@ export const V0ChatComposition: React.FC = () => {
           </div>
       )}
 
-      {/* === Messaging view (app + prompt form) — slides left as a unit === */}
-      {messagingVisible && (
+      {/* === V0 chat page (intro) — zooms into the follow-up input, then swipes away === */}
+      {showPage && (
         <div
           style={{
             position: "absolute",
             top: 0,
             left: 0,
-            width: "100%",
-            height: "100%",
-            transform: `translateX(${appTranslateX}%)`,
-            zIndex: swipeProgress >= 1 ? 0 : 2,
-            opacity: swipeProgress >= 1 ? 0 : 1,
+            width: VIDEO_WIDTH,
+            height: VIDEO_HEIGHT,
+            transform: `translateX(${pageSwipeX}px)`,
+            zIndex: 2,
           }}
         >
-          {/* Messaging app fills the area above the prompt form */}
           <div
             style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: PROMPT_BAR_HEIGHT,
-              overflow: "hidden",
+              width: VIDEO_WIDTH,
+              height: VIDEO_HEIGHT,
+              transformOrigin: `${FOLLOWUP_INPUT_CENTER.x}px ${FOLLOWUP_INPUT_CENTER.y}px`,
+              transform: `translate(${zoomTx}px, ${zoomTy}px) scale(${scale})`,
             }}
           >
-            <MessagingApp />
-          </div>
-          {/* Prompt form pinned to the bottom of the messaging view */}
-          <div
-            style={{
-              position: "absolute",
-              bottom: 0,
-              left: 0,
-              right: 0,
-            }}
-          >
-            <ChatInputBar
+            <V0ChatPage
               typedText={inputTypedText}
               showCursor={isTypingPhase}
-              placeholder={inputPlaceholder}
-              sendClickFrame={SCENES.sendClick.start}
+              sendButtonActive={
+                frame >= SCENES.sendClick.start &&
+                frame < SCENES.sendClick.end
+              }
             />
           </div>
         </div>

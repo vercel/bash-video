@@ -72,21 +72,22 @@ export const PRIOR_SUMMARY_DETAIL = `User types → MessageInput → ChatContain
 
 export const PRIOR_DETAIL_TEXT = `The app uses SWR's \`mutate()\` to trigger a refetch of both the messages list and conversations list (to update the "last message" preview in the sidebar) after a successful save.`;
 
-// Frame timing for each scene
-// Typing starts at frame 30 while messaging app is still visible.
-// Swipe triggers when typing ends (user "sends" the message).
+// Frame timing for each scene.
+// Intro: full v0 chat page → zoom into follow-up input → type prompt →
+// send click → swipe away to reveal the chat stream.
 export const SCENES = {
-  appIntro: { start: 0, end: 155 },       // messaging app visible throughout typing
-  userTyping: { start: 30, end: 140 },    // typing over the messaging app (1.5x faster)
-  sendClick: { start: 170, end: 180 },    // mouse clicks send button (1s pause after typing)
-  swipeTransition: { start: 180, end: 210 }, // swipe on send
-  messageSent: { start: 220, end: 245 },  // bubble appears in chat
-  thinking: { start: 245, end: 305 },     // brain shimmer → done
-  streaming: { start: 305, end: 380 },    // char-by-char response
-  permissionCard: { start: 385, end: 480, allowClick: 435 },
-  agentBrowser: { start: 480, end: 660 },
-  report: { start: 660, end: 865 },
-  autofix: { start: 870, end: 1070 },
-  workMetrics: { start: 1070, end: 1120 },
-  endHold: { start: 1120, end: 1150 },
+  pageHold: { start: 0, end: 45 },            // show full v0 page
+  zoomIn: { start: 45, end: 95 },             // camera pushes into follow-up input
+  userTyping: { start: 110, end: 225 },       // typing in the zoomed input
+  sendClick: { start: 235, end: 245 },        // click send
+  swipeTransition: { start: 250, end: 285 },  // page slides out, chat slides in
+  messageSent: { start: 278, end: 305 },      // bubble appears as swipe finishes
+  thinking: { start: 305, end: 365 },
+  streaming: { start: 365, end: 440 },
+  permissionCard: { start: 445, end: 540, allowClick: 495 },
+  agentBrowser: { start: 540, end: 720 },
+  report: { start: 720, end: 925 },
+  autofix: { start: 930, end: 1130 },
+  workMetrics: { start: 1130, end: 1180 },
+  endHold: { start: 1180, end: 1210 },
 } as const;
